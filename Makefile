@@ -14,13 +14,13 @@
 
 release_hdr := $(shell sh -c './mkreleasehdr.sh')
 uname_S := $(shell sh -c 'uname -s 2>/dev/null || echo not')
-OPTIMIZATION?=-O2
+OPTIMIZATION?=-O0
 DEPENDENCY_TARGETS=hiredis linenoise lua
 
 # Default settings
 STD=-std=c99 -pedantic
 WARN=-Wall -W
-OPT=$(OPTIMIZATION)
+OPT= "O0"#$(OPTIMIZATION)
 
 PREFIX?=/usr/local
 INSTALL_BIN=$(PREFIX)/bin
@@ -49,9 +49,9 @@ endif
 # Override default settings if possible
 -include .make-settings
 
-FINAL_CFLAGS=$(STD) $(WARN) $(OPT) $(DEBUG) $(CFLAGS) $(REDIS_CFLAGS)
+FINAL_CFLAGS=$(STD) $(WARN) $(OPT) $(DEBUG) $(CFLAGS) $(REDIS_CFLAGS) -msse4.2 -fgnu89-inline
 FINAL_LDFLAGS=$(LDFLAGS) $(REDIS_LDFLAGS) $(DEBUG)
-FINAL_LIBS=-lm
+FINAL_LIBS=-lm -msse4.2 -fgnu89-inline
 DEBUG=-g -ggdb
 
 ifeq ($(uname_S),SunOS)
@@ -71,7 +71,7 @@ ifeq ($(uname_S),AIX)
 else
 	# All the other OSes (notably Linux)
 	FINAL_LDFLAGS+= -rdynamic
-	FINAL_LIBS+= -pthread
+	FINAL_LIBS+= -pthread 
 endif
 endif
 endif
@@ -126,6 +126,8 @@ REDIS_CHECK_AOF_OBJ=redis-check-aof.o
 all: $(REDIS_SERVER_NAME) $(REDIS_SENTINEL_NAME) $(REDIS_CLI_NAME) $(REDIS_BENCHMARK_NAME) $(REDIS_CHECK_DUMP_NAME) $(REDIS_CHECK_AOF_NAME)
 	@echo ""
 	@echo "Hint: It's a good idea to run 'make test' ;)"
+	@echo "opt is :"${OPT}
+	@echo "OPTIMIZATION is :"${OPTIMIZATION}
 	@echo ""
 
 .PHONY: all

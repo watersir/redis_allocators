@@ -50,7 +50,7 @@
 #include <jemalloc/jemalloc.h>
 #if (JEMALLOC_VERSION_MAJOR == 2 && JEMALLOC_VERSION_MINOR >= 1) || (JEMALLOC_VERSION_MAJOR > 2)
 #define HAVE_MALLOC_SIZE 1
-#define zmalloc_size(p) je_malloc_usable_size(p)
+#define zmalloc_size(p) nvmalloc_size(p)
 #else
 #error "Newer version of jemalloc required"
 #endif
@@ -77,6 +77,26 @@ float zmalloc_get_fragmentation_ratio(size_t rss);
 size_t zmalloc_get_rss(void);
 size_t zmalloc_get_private_dirty(void);
 void zlibc_free(void *ptr);
+
+// fxl
+#define DEVICE_SIZE  0x400000000  //2g //0x300000000    //12G
+#define NVM_SIZE     0x408004000
+#define	SUM_PAGES    (DEVICE_SIZE / 4096)
+#define ADDR         0x7f0040000000 //0x7f0100000000   //4G
+#define TAIL         0x7f0100000000 //0x7f02fffff000   //8G
+#define FREELIST     0x7f0000000000   //7f0000000000
+#define BLOCKMASK    0x7f0000000020
+
+
+void * nvmrealloc(void *ptr,  size_t newsize);
+size_t nvmalloc_size(void *ptr);
+void *nvmcalloc(size_t n, size_t size);
+
+void nvmalloc_init(unsigned nrPages, unsigned long freeWait);
+void nvmalloc_exit(void);
+void * nvmalloc(size_t size);
+int nvfree(void* addr);
+// fxl
 
 #ifndef HAVE_MALLOC_SIZE
 size_t zmalloc_size(void *ptr);
