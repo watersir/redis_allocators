@@ -1872,6 +1872,25 @@ static void intrinsicLatencyMode(void) {
  *--------------------------------------------------------------------------- */
 
 int main(int argc, char **argv) {
+
+    // fxl
+    printf("enter redis-benchmark;\n");
+
+/*
+    int fd = open("/dev/pmem0",O_RDWR);
+    void * addr = mmap((void *)FREELIST,DEVICE_SIZE,PROT_READ|PROT_WRITE,MAP_SHARED,fd,0);//FREELIST
+    printf("++++++++++  initNVM fd : %d ++++++++++++\n", fd);
+    printf("++++++++++  addr : %p ++++++++++++\n", addr);
+    if(fd== -1) {
+        printf(" wrong !  ");
+        return 0;
+    }*/
+
+
+    walloc_init(100000);
+    // fxl
+
+
     int firstarg;
 
     config.hostip = sdsnew("127.0.0.1");
