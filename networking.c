@@ -636,6 +636,8 @@ void replicationHandleMasterDisconnection(void) {
     if (server.masterhost != NULL) disconnectSlaves();
 }
 
+
+extern unsigned int * slot_endurance;
 void freeClient(redisClient *c) {
     listNode *ln;
 
@@ -703,6 +705,30 @@ void freeClient(redisClient *c) {
         ln = listSearchKey(server.clients,c);
         redisAssert(ln != NULL);
         listDelNode(server.clients,ln);
+
+
+	// fxl: close client in function freeclient.
+	
+	printf("close client in function freeclient:***********************\n");
+	printf("closed c->id:%d\n",c->id);
+	printf("close client in function freeclient:***********************\n");
+	if((((c->id)-2)==137)||(((c->id)-2)==180)||(((c->id)-2)==210)) {
+	    unsigned long long int write_record = 0;
+	    char filename[50] = {0};
+	    sprintf(filename,"endurance_malloc_%d_a.txt",((c->id)-2));
+        FILE *fp_p = fopen(filename,"w");
+        for(int i = 0; i < SUM_PAGES*64;i++ ){
+            fprintf(fp_p,"%d\n",slot_endurance[i]);
+            write_record += slot_endurance[i];
+        }
+        fclose(fp_p);
+        printf("write_record:%d\n",write_record);
+
+	    if((((c->id)-2)==1000)) exit(0);
+	}
+	// fxl: close client in function freeclient.
+
+
     }
 
     /* When client was just unblocked because of a blocking operation,
