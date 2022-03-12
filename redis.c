@@ -3211,8 +3211,24 @@ void redisSetProcTitle(char *title) {
     REDIS_NOTUSED(title);
 #endif
 }
-
+#include <fcntl.h> 
+#include<sys/mman.h>
+extern unsigned int * slot_endurance;
 int main(int argc, char **argv) {
+
+    // fxl
+printf("???\n");
+    void *  ret = mmap(0x7f0000000000,SUM_PAGES*64*sizeof(unsigned int), PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS,-1, 0);
+    if (ret == MAP_FAILED){
+        printf(" wrong !  ");
+        exit(0);
+	}
+printf("???\n");
+	printf("slot_endurance:%lx\n",slot_endurance);
+    memset(ret,0,SUM_PAGES*64*sizeof(unsigned int));
+    slot_endurance = ret;
+    printf("slot_endurance:%lx\n",slot_endurance);
+    // fxl
     struct timeval tv;
 
     /* We need to initialize our libraries, and the server configuration. */

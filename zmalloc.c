@@ -118,25 +118,48 @@ static void zmalloc_default_oom(size_t size) {
     fflush(stderr);
     abort();
 }
-
+unsigned long int malloc_endurance = 0;
+int times = 0;
+long int startaddress = 0;
 static void (*zmalloc_oom_handler)(size_t) = zmalloc_default_oom;
+unsigned int *slot_endurance;
+
+void slot_counter(void * ptr, int size) {
+
+    unsigned int start_id = ((size_t)ptr)>>6;
+    for(int i = 0 ; i < ((size+63)>>6);i++){
+        slot_endurance[(start_id+i)%(SUM_PAGES<<6)]++;
+	}
+}
 
 void *zmalloc(size_t size) {
+
+
     void *ptr = malloc(size+PREFIX_SIZE);
+
+    // for fxl	: it is not ture.
+    slot_counter(ptr,size+PREFIX_SIZE);
+    // for fxl 
 
     if (!ptr) zmalloc_oom_handler(size);
 #ifdef HAVE_MALLOC_SIZE
     update_zmalloc_stat_alloc(zmalloc_size(ptr));
+//    printf("addr[ptr]:%x\n",(size_t)ptr);
     return ptr;
 #else
     *((size_t*)ptr) = size;
     update_zmalloc_stat_alloc(size+PREFIX_SIZE);
+//    printf("addr[ptr+PREFIX_SIZE]:%x\n",(char*)ptr+PREFIX_SIZE);
+
     return (char*)ptr+PREFIX_SIZE;
 #endif
 }
 
 void *zcalloc(size_t size) {
     void *ptr = calloc(1, size+PREFIX_SIZE);
+    // for fxl	: it is not ture.
+    slot_counter(ptr,size+PREFIX_SIZE);
+    // for fxl 
 
     if (!ptr) zmalloc_oom_handler(size);
 #ifdef HAVE_MALLOC_SIZE
@@ -161,6 +184,12 @@ void *zrealloc(void *ptr, size_t size) {
     oldsize = zmalloc_size(ptr);
     newptr = realloc(ptr,size);
     if (!newptr) zmalloc_oom_handler(size);
+    // for fxl	: it is not ture.
+    if (oldsize<size) {
+//	add_endurance(ptr,size);
+    	slot_counter(ptr,size);
+	}
+    // for fxl 
 
     update_zmalloc_stat_free(oldsize);
     update_zmalloc_stat_alloc(zmalloc_size(newptr));
