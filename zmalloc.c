@@ -490,7 +490,6 @@ size_t sbrk_end_address;
 #define SIZE_SBRK  160*1024*1024 //
 
 char *bitmapsbrk;//[SUM_PAGES] = {0};  // SUM_PAGES*8 
-int start_i = 0;
   // 96 M is ok.
 void set_bit(int pos,unsigned char length,char * bitmap) {
     for( int i = 0; i < length; i++) {
@@ -508,35 +507,53 @@ void reset_bit(int pos,unsigned char length,char * bitmap) {
 int get_bit(int pos,char * bitmap) {
     return ((bitmap[pos/8]&(0X01<<(pos%8)))!=0);
 }
+#define UNITSIZE 16 
+#define SUMBIT (SUM_PAGES * 10 * 8UL)
+int start_i = 0;
+int find_first_n(long long int start_pos,long long int end_pos, char * bitmap, long long int size) {
+    
+    long long int find_size = 0;
+    
+    for(; start_pos < end_pos; start_pos++ ) {
+        if(!get_bit(start_pos,bitmap))
+            find_size ++;
+        else
+            find_size = 0;
 
-void *mysbrk(size_t size) {  // the size of list_head is 24 bytes.
-//printf("size is :%d\n",size);
-    int ii = 0;
-	for(ii = 0; ii < SUM_PAGES*10; ii++) {
-//        printf("i :%d\n",i);
-        int i ;
-        if(ii+start_i < SUM_PAGES*10) i = ii+start_i;
-        else i = ii+ start_i-SUM_PAGES*10; // (ii+ start_i)<SUM_PAGES?(ii+ start_i):(ii+ start_i-534288);
-		if(bitmapsbrk[i]!=0xFF) {
-			for(int j = 0 ; j < 8 ; j++){
-//                printf("j :%d\n",j);
-				if(!get_bit(i*8+j,bitmapsbrk)) {
-//                    if(sbrk_start_address>sbrk_end_address) sbrk_start_address = sbrk_init_address;
-//                    int rel_size = ((size+7)>>3)<<3;
-//                    sbrk_start_address += rel_size;
-//                    printf("i = %d, j = %d\n",i,j);
-//                    printf("new sbrk_start_address:%p\n",(sbrk_start_address+(i*8+j)*24));
-                    set_bit(i*8+j,1,bitmapsbrk);
-                    start_i = i;
-                    return (void *)(sbrk_start_address+(i*8+j)*16);
-			    }
-			
-			}
-		}
+        if(find_size == size)
+            return start_pos+1-size;
+    }
+
+    return -1;
+}
+
+void *mysbrk(size_t size) { 
+    int size_bit = 1; 
+
+    long long int loc = find_first_n(start_i,SUMBIT,bitmapsbrk,size_bit);
+    if(loc == -1) {
+        loc = find_first_n(0,start_i,bitmapsbrk,size_bit);
+    }
+    if(loc != -1) {
+        start_i = loc + size_bit;
+	if(start_i == 16777216) {
+		printf("sbrk:%p",sbrk_start_address);
+		printf("ret:%p",(void *)(sbrk_start_address+loc*UNITSIZE));
+		printf("loc:%d",loc);
+		printf("size_bit:%d",size_bit);
 	}
-    if(ii == SUM_PAGES*10) printf("no space. exit.");
+        set_bit(loc,size_bit,bitmapsbrk);
+	if(loc >= SUMBIT ||loc < 0 ) {
+            while(1);
+        }
+        return  (void *)((size_t)sbrk_start_address+(size_t)loc*UNITSIZE);
+    }
+    
+    for(;;)
+    printf("ERRO: sbrk has no space!\n");
     exit(0);
 }
+
 void mysbrkfree(void * ptr) {
     int pos = ((size_t)ptr-(size_t)sbrk_start_address)/16;
 //    printf("free i = %d; j = %d\n",pos/8,pos%8);
@@ -729,9 +746,9 @@ static inline int getMoreMemory(uint32_t size)
     if (addr == MAP_FAILED) {
         perror("mremap failed");
         return -1;
-    } else {
-	printf("get memory:%p - %p \n",end_address,end_address+ newPages * PAGE_SIZE);
-	}
+    }// else {
+//	printf("get memory:%p - %p \n",end_address,end_address+ newPages * PAGE_SIZE);
+//	}
 
 #ifdef _GNU_SOURCE
     if (addr != start_address) {
@@ -857,7 +874,7 @@ static char* getFreeLocation(uint32_t size, uint32_t* actSize)
 #endif
 #endif
                 }
-
+               // printf("sizeof(list_head):%d\n",sizeof(list_head));
                 lh = (list_head*)mysbrk(sizeof(list_head));//(list_head*)(start_address + location + actualSize + sizeof(struct header));//malloc(sizeof(list_head));
                 lh->position = location + actualSize;
                 lh->next = NULL;
@@ -1056,7 +1073,7 @@ static void incrementTime()
  */
 void nvmalloc_init(unsigned nrPages, unsigned long freeWait)
 {
-        nrPages = SUM_PAGES;
+
 //    bitmapsbrk = (char *)sbrk(SUM_PAGES*10); 
 //    memset(bitmapsbrk,0,SUM_PAGES*10);
 
@@ -1070,10 +1087,7 @@ void nvmalloc_init(unsigned nrPages, unsigned long freeWait)
     start_address = (char*) mmap(NULL, nrPages * PAGE_SIZE, PROT_READ | PROT_WRITE,
                                  MAP_ANONYMOUS | MAP_PRIVATE, 0, 0);
 #else
-    size_t size_bits_mysbrk = SUM_PAGES*10;
-    size_t size_mysbrk = SUM_PAGES*10*8*16;
-    size_t size_bits_alloc = (SUM_PAGES * PAGE_SIZE / BASE_SIZE / 8);
-    size_t size_bitmap = size_bits_mysbrk + size_mysbrk + size_bits_alloc;
+    size_t size_bitmap = SUM_PAGES*10 + SUM_PAGES*10*8*16 + SUM_PAGES * PAGE_SIZE / BASE_SIZE / 8;
     start_address= mmap(0x7f0000000000 - size_bitmap, nrPages * PAGE_SIZE + size_bitmap, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS,-1, 0);
 #endif
     if ((void*) start_address == MAP_FAILED) {
@@ -1081,15 +1095,18 @@ void nvmalloc_init(unsigned nrPages, unsigned long freeWait)
     }
     bitmapsbrk = 0x7f0000000000 - size_bitmap;
     memset(bitmapsbrk,0,SUM_PAGES*10);
-    sbrk_start_address = 0x7f0000000000 - size_bitmap + size_bits_mysbrk;
-    printf("sbrk_start_address :%p\n",sbrk_start_address);
-    start_address = 0x7f0000000000;
+    printf("sbrk_bitmap_address :%p\n",bitmapsbrk);
 
-    printf("bitmap is ok?\n");
-    bitmap = 0x7f0000000000 - size_bitmap + size_bits_mysbrk + size_mysbrk;
-    memset(bitmap, 0 ,nrPages * PAGE_SIZE / BASE_SIZE / 8);
-    bitmap_size = SUM_PAGES * PAGE_SIZE / BASE_SIZE / 8;
-    printf("bitmap is ok.\n");
+    sbrk_start_address = 0x7f0000000000 - SUM_PAGES*10*8*16 - (SUM_PAGES * PAGE_SIZE / BASE_SIZE / 8);
+    printf("sbrk_start_address :%p\n",sbrk_start_address);
+
+    bitmap = 0x7f0000000000 - (SUM_PAGES * PAGE_SIZE / BASE_SIZE / 8);
+    memset(bitmap, 0 ,(SUM_PAGES * PAGE_SIZE / BASE_SIZE / 8));
+    bitmap_size = nrPages * PAGE_SIZE / BASE_SIZE / 8; // This time tie bitmap_size is just nrPages.
+    printf("bitmap :%p\n",bitmap);
+//	exit(0);   
+
+    start_address = 0x7f0000000000;
 
     nr_pages = nrPages;
     free_zone = start_address;
@@ -1098,8 +1115,6 @@ void nvmalloc_init(unsigned nrPages, unsigned long freeWait)
     dont_allocate_list_head = NIL;
     dont_allocate_list_tail = NIL;
     dont_allocate_wait = freeWait;
-
-
 
     for (i = 0; i <= NR_SIZES; i++) {
         free_lists[i] = NULL;

@@ -699,7 +699,7 @@ void freeClient(redisClient *c) {
 	// fxl: close client in function freeclient.
 	
 	printf("\nclosed c->id:%d\n",c->id);
-	if((((c->id)-2)==100)||(((c->id)-2)==70)) {
+	if((((c->id)-2)==47) || (((c->id)-2)==94)) {
 /*	    unsigned int write_record = 0;
 	    char filename[50] = {0};
 	    sprintf(filename,"page_endurance_nvmalloc_%d.txt",((c->id)-2));
@@ -714,16 +714,16 @@ void freeClient(redisClient *c) {
 		printf("now write the endurance; c->id = %d\n",c->id);
 		unsigned long long int write_record = 0;
 		char name[50] = {0};
-		sprintf(name,"endurance_nvmalloc_%d.txt",((c->id)-2));//%d
+		sprintf(name,"endurance_nvmalloc_%d_e.txt",((c->id)-2));//%d
 		FILE *fp_p = fopen(name,"w");//"page_endurance_wafa.txt"
 		for(int i = 0; i < SUM_PAGES*64;i++ ){
-            fprintf(fp_p,"%ld\n",i,slot_endurance[i]);
-            write_record+=slot_endurance[i];
+            		fprintf(fp_p,"%ld\n",i,slot_endurance[i]);
+            		write_record+=slot_endurance[i];
 		}
 		fclose(fp_p);
-		printf("write_record:%d\n",write_record);
+		printf("write_record:%ld\n",write_record);
 	
-	    if((((c->id)-2)==100)) exit(0);
+	    if((((c->id)-2)==94)) exit(0);
 	}
 
 	// fxl: close client in function freeclient.
