@@ -27,10 +27,11 @@
  * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGE.
  */
+#include "zmalloc.h"
 
 #include <stdio.h>
 #include <stdlib.h>
-
+#include <stddef.h>
 /* This function provide us access to the original libc free(). This is useful
  * for instance to free results obtained by backtrace_symbols(). We need
  * to define this function before including zmalloc.h that may shadow the
@@ -42,7 +43,6 @@ void zlibc_free(void *ptr) {
 #include <string.h>
 #include <pthread.h>
 #include "config.h"
-#include "zmalloc.h"
 
 #ifdef HAVE_MALLOC_SIZE
 #define PREFIX_SIZE (0)
@@ -54,19 +54,729 @@ void zlibc_free(void *ptr) {
 #endif
 #endif
 
+//**************************write  by fxl**************************
+/*#include <stdlib.h>
+#include <stdio.h>
+#include <unistd.h>
+#include <string.h>
+#include <sys/mman.h>
+#include <fcntl.h>*/
+unsigned int slot_endurance[SUM_PAGES*64] = {0};
+superblock *super =  (superblock *)super_block;
+int set_super_page_info_tmp(page_info *page,page_info *page_info_tmp) {
+    page_info *pagei = page_info_tmp;
+    pagei->bitmap = (uchar *)page+4032;
+    pagei->freenum= (uchar *)pagei->bitmap+8;
+    pagei->maxnum= pagei->freenum + 1;
+    pagei->offset= pagei->maxnum + 1;
+    pagei->next=(ulong *)(pagei->offset+1);
+    pagei->pre=(ulong *)((ulong *)pagei->next+1);
+    pagei->leave_endurance = (ulong *)(pagei->pre+1);
+    pagei->bitmap_size = (uchar *)(pagei->leave_endurance+1);
+    return 0;
+}
+void calc_counter2(void * result,uint size) {
+    size_t ptr = (size_t)result - (size_t)super->data;
+    unsigned int start_id = (ptr>>6);
+    for(int i = 0; i < size; i++) 
+        slot_endurance[(start_id+i)]+=1;	       
+
+}
+
+void set_bit(unsigned char pos,unsigned char length,char * bitmap) {
+    for( int i = 0; i < length; i++) {
+        int setpos = pos+i;
+        bitmap[setpos/8]|=0X01<<(setpos%8);
+    }
+
+}
+void reset_bit(unsigned char pos,unsigned char length,char * bitmap) {
+    for( int i = 0; i < length; i++) {
+        int location = pos+i;
+        bitmap[location/8]=bitmap[location/8]&(0xFF^(0X01<<(location%8)));
+    }
+}
+int get_bit(unsigned char pos,char * bitmap) {
+    return ((bitmap[pos/8]&(0X01<<(pos%8)))!=0);
+}
+
+int record_slab_malloc_size(page_info *page,int off,int length) {
+    //1.put the bitmap of the malloc.
+    if(off==0)
+        set_bit(0,length,page->bitmap_size);
+    else{
+        if(get_bit(off-1,page->bitmap_size))
+            reset_bit(off,length,page->bitmap_size);
+        else
+            set_bit(off,length,page->bitmap_size);
+    }
+    //2.judge if need to opposite the bitmap behand.
+    if(get_bit(off,page->bitmap_size)==get_bit(off+length,page->bitmap_size)) {
+        for(int i = off+length;i < 63;i++) {
+            if(get_bit(i,page->bitmap_size))
+                reset_bit(i,1,page->bitmap_size);
+            else
+                set_bit(i,1,page->bitmap_size);
+        }
+    }
+
+}
+int get_slab_free_size(page_info *page,int off) {
+    int isZero = get_bit(off,page->bitmap_size);
+    int i = 0;
+    while(get_bit(off+i,page->bitmap_size) == isZero) {
+        if(off+i==63) 
+            break;         // boarder should be considered.
+        i++;
+
+    }
+    return i;
+}
+/*
+ *  2021.04.01
+ *  do not optimization.
+ */
+void find_longgest_zero(page_info *pagei) {
+    int max = *pagei->maxnum;
+    int off = 0;
+    int max_tmp = 0;
+    int off_tmp = 0;
+    int last_bit = 0;
+    for(int i = 0 ; i < 63; i++) {
+        if(!get_bit(i,pagei->bitmap)){
+            max_tmp++;
+            if(last_bit==0)
+                off_tmp = i;
+            last_bit = 1;
+            if(max_tmp>max) {
+                max = max_tmp;
+                off = off_tmp;
+            }
+
+        } else {
+            max_tmp = 0;
+            last_bit =0;
+        }
+
+    }
+    if(max>*pagei->maxnum) {
+        *pagei->maxnum = max;
+        *pagei->offset = off;
+    }
+}
+void * page_malloc(){
+    void * page = NULL;
+    int size = 1;
+
+    free_list *freenode,*freenodenext,*freenode_copy;//add??? pointer.
+    freenode = super->list_head->head; //freenode will not be NULL.
+    freenodenext = freenode->list_next;
+    if(freenode->pages >=size) {
+
+        page = freenode;
+        if(freenode->pages == size) {
+            super->list_head->head = freenodenext;
+        } else {
+            freenode_copy = (free_list *)((size_t)freenode+(size<<12));
+            freenode_copy->pages = freenode->pages -size;
+            freenode_copy->list_next = freenode->list_next;
+
+            super->list_head->head = freenode_copy;
+        }
+        return (void *)page;
+    }
+
+    return NULL;
+}
+void page_init(void *page)  //先假设我初始化没有问题。
+{
+    int i;
+    page_info *pagei = super->page_info_tmp; //give a space to store address.
+    pagei->bitmap = (uchar *)page+4032; //? 64*63 = 4032?
+    for( i=0;i<8;i++){
+        *(pagei->bitmap+i) = 0;
+        if(i == 7)
+            *(pagei->bitmap+i) = 0b10000000;  // set bitmap ,the last always be 1.
+    }
+    pagei->freenum= (uchar *)pagei->bitmap+8;
+    *pagei->freenum = 63;
+    pagei->maxnum= pagei->freenum + 1;
+    *pagei->maxnum = 63;
+    pagei->offset= pagei->maxnum + 1;
+    *pagei->offset = 0;
+    pagei->next=(ulong *)(pagei->offset+1);
+    *pagei->next = NULL;
+    pagei->pre=(ulong *)((long *)pagei->next+1);
+    *pagei->pre = NULL;
+    pagei->leave_endurance = (ulong *)((long *)pagei->pre+1);
+    pagei->bitmap_size = (uchar *)(pagei->leave_endurance+1);
+    *pagei->bitmap_size = 0;
+}
+
+page_info *find_array_suit(size_t size,slab_page_array *array) {
+
+    page_info *tmppage;
+    int suitsize=size;
+    for(;suitsize<=63;suitsize++) {
+        int off_slabslot = suitsize;
+        if((array[off_slabslot].head) != NULL) {
+            tmppage = array[off_slabslot].head;
+            set_super_page_info_tmp(tmppage,super->page_info_tmp);
+            page_info *pagei = super->page_info_tmp;
+            array[off_slabslot].head = *pagei->next;
+            if(array[off_slabslot].head != NULL) {
+                set_super_page_info_tmp(array[off_slabslot].head,super->page_info_next);
+                page_info * page_info_next = super->page_info_next;
+                *page_info_next->pre = NULL;
+            }
+            *pagei->next=NULL;
+            *pagei->pre=NULL;
+
+            return tmppage;
+        }
+    }
+
+    return NULL;
+}
+
+void *get_new_page() {
+    void *page = page_malloc();
+    
+    if(page == NULL) {
+        return page;
+    }
+
+    page_init(page); 
+
+    return page;
+}
+
+
+void reset_page(slab_page_array *array,page_info *pagei) {
+
+    int num;
+    num = *(pagei->maxnum);
+    if(num > 63 || num == 0)
+        printf("wrong! the pagei->maxnum > 63! or = 0. Don't need to reset!\n");
+    if(array[num].head == NULL) {
+        array[num].head = (page_info * )((size_t)pagei->bitmap-4032);
+        array[num].tail = (page_info * )((size_t)pagei->bitmap-4032);
+    } else {
+        *pagei->pre = array[num].tail;
+        set_super_page_info_tmp(array[num].tail,super->page_info_pre);
+        page_info * page_pre = super->page_info_pre;
+        *page_pre->next = (size_t)pagei->bitmap-4032;  //tail next  = pagei
+        array[num].tail = (size_t)pagei->bitmap-4032;   //tail = pagei
+    }
+}
+
+// void reconf_page(page_info *page) {
+//     if(*page->maxnum == 0) { // Freed, must to reconf_page.
+
+//     }
+// //    if(*page->maxnum != 0) return;
+//     //I don't need to do more things, I just put it to the original list.
+// //    if(*page->freenum>=10 && *page->maxnum==0) {
+//         find_longgest_zero(page); // calculate the maxnum.
+// //    }
+//     if(*page->maxnum != 0)
+//         reset_page(super->slab_array,page);
+// }
+
+/*
+void reconf_page(page_info *page) {
+    if(*page->freenum==0) return; // Don't need put back if freenum is 0, because free can't get from the right list.
+    //I don't need to do more things, I just put it to the original list.
+    if(*page->maxnum==0) {
+        find_longgest_zero(page); // calculate the maxnum.
+    }
+    reset_page(super->slab_array,page);
+}
+*/
+/*---------------add from fxl--------------------*/
+/*----------------2021.03.15---------------------*/
+void NVMinit(){
+    printf("-------NVMinit------addr super %llx;\n",super);
+    super->slab_array = (uint *)(super + 1);
+    super->list_head = (free_list *)(super->slab_array+64);	
+    super->block_array = (long *)(super->list_head+1);
+    super->page_info_tmp = (page_info *)(super->block_array + SUM_PAGES);
+    super->page_info_pre = (page_info *)(super->page_info_tmp + 1);
+    super->page_info_next = (page_info *)(super->page_info_pre + 1);
+    super->data = (char *)(((((size_t)super->page_info_next + sizeof(page_info))>>12)+1)<<12); //500M buffer? page alignment.
+    printf("get start ~ end: %p ~ %p\n",super->data,(size_t)super+NVM_SIZE);
+
+    for(int i=0;i<slab_array_size;i++) {
+        super->slab_array[i].head = NULL;
+        super->slab_array[i].tail = NULL;
+    }
+    super->list_head->head = (struct free_list *)((size_t)super->data); 
+    super->list_head->head->pages = SUM_PAGES;
+    super->list_head->head->list_next = NULL;
+
+    for(int i = 0; i<SUM_PAGES; i++) {
+        super->block_array[i] = 0;
+    }
+    printf("------- End of the initial of the NVM. -------\n");
+
+}
+// ****************************This is all for free.***************************************//
+// int can_merge(free_list *lowaddr_free_list,free_list *highaddr_free_list) {
+//     return ((size_t)lowaddr_free_list+(lowaddr_free_list->pages)<<12) == highaddr_free_list;
+// }
+// int insert_to_free_list_op(free_list *new_free_list) {
+//     // // 2. insert to the right location.
+//     struct free_list * free_head = super->list_head->head;
+//     if(free_head == NULL) {
+//         super->list_head->head = new_free_list;
+//         return 0;
+//     }
+//     if(new_free_list < free_head) {
+//         if(can_merge(new_free_list,free_head)) {
+//             new_free_list->list_next = free_head->list_next;
+//             new_free_list->pages += free_head->pages;
+//         } else {
+//             new_free_list->list_next = free_head;
+//         }
+//         super->list_head->head = new_free_list;
+//     } else {
+//         while(free_head->list_next != NULL) {
+//             if(new_free_list < free_head->list_next) {
+//                 if(can_merge(new_free_list,free_head->list_next)) {
+//                     new_free_list->list_next = free_head->list_next->list_next;
+//                     new_free_list->pages += free_head->list_next->pages;
+//                 } else {
+//                     new_free_list->list_next = free_head->list_next;
+//                 }
+//                 free_head->list_next = new_free_list;
+//                 return 0;
+//             }
+//             free_head = free_head->list_next;
+            
+//         }
+//         free_head->list_next = new_free_list; 
+//     }
+//     return 0;
+// }
+// int insert_to_free_list(free_list *new_free_list) {
+
+//     struct free_list * free_head = super->list_head->head;
+//     if(free_head == NULL) {
+//         super->list_head->head = new_free_list;
+//     } else {
+//         new_free_list->list_next = free_head;
+//         super->list_head->head = new_free_list;
+//     }
+//     return 0;
+// }
+// void BlockFree(void *addr) { 
+
+//     ulong index = ((size_t)addr-(size_t)super->data)>>12;
+//     ulong size = super->block_array[index];
+//     free_list *new_free_list = (free_list *)addr;
+//     new_free_list->pages = size;
+//     new_free_list->list_next = NULL;
+//     insert_to_free_list(new_free_list);
+//     super->block_array[index] = 0;
+// }
+
+int insert_to_free_list(free_list *new_free_list) {
+    // 2. insert to the right location.
+
+    struct free_list * free_head = super->list_head->head;
+    if(free_head == NULL) {
+        super->list_head->head = new_free_list;
+        return 0;
+    }
+    if(free_head > new_free_list) {
+        new_free_list->list_next = free_head;
+        super->list_head->head = new_free_list;
+        return 0;
+    }
+    while(free_head->list_next != NULL) {
+        if(free_head->list_next > new_free_list) {
+            // find the location ,and insert.
+            new_free_list->list_next = free_head->list_next;
+            free_head->list_next = new_free_list;
+            return 0;
+        }
+        free_head = free_head->list_next;
+    }
+
+    free_head->list_next = new_free_list;
+    return 0;
+
+}
+void BlockFree(void *addr) { //this is to free the blocks and add them to free list
+    // ???...
+    // I will find the right way of the list.
+    // 1. find the right way
+    free_list *new_free_list;
+    new_free_list = (free_list *)addr;
+    long size = super->block_array[((size_t)addr-(size_t)super->data)>>12];
+    if(size <= 0)
+        printf("erro, block freed size <= 0;\n ");
+    new_free_list->pages = size;
+    new_free_list->list_next = NULL;
+    insert_to_free_list(new_free_list);
+    super->block_array[((size_t)addr-(size_t)super->data)>>12] = 0;
+}
+
+
+void slabfree(void *ptr) {
+    if((size_t)ptr < (size_t)super->data)
+        printf("Erro: slab freesize < super->data\n");
+    page_info *page_addr = ((size_t)ptr>>12)<<12;
+    uint offset = ((size_t)ptr - (size_t)page_addr) >> 6;
+
+    set_super_page_info_tmp((page_info *)page_addr,super->page_info_tmp);
+    page_info * pagei = super->page_info_tmp;
+
+    int size = get_slab_free_size(pagei,offset);
+
+    reset_bit(offset,size,pagei->bitmap);
+    *pagei->freenum += size;
+}
+
+void NVMfree(void *ptr){ //this size refers to allocation size
+
+    if (ptr == NULL) {
+        return;
+    }
+    // 1. judge the pointer possible in block;
+    if(!(((size_t)ptr-(size_t)super->data)%4096)) {
+        if(super->block_array[((size_t)ptr-(size_t)super->data)/4096] > 0) {
+            BlockFree(ptr);
+            return;
+        }
+    }
+    slabfree(ptr);
+}
+
+// ****************************This is all for malloc.***************************************//
+void block_endurence_add(void * addr,size_t size) {
+    calc_counter2(addr,size*64);
+}
+
+void *BlockMalloc(size_t size){
+    void * block = NULL;
+
+    free_list *freenode,*freenodenext,*freenode_copy;//add??? pointer.
+    freenode = super->list_head->head;
+    if (freenode==NULL)  {
+        printf("no space ! exit!");
+        exit(0);
+    }
+    freenodenext = freenode->list_next;
+    if(freenode->pages >=size) {
+
+        block = freenode;
+        if(freenode->pages == size) {
+            super->list_head->head = freenodenext;
+        } else {
+            freenode_copy = (free_list *)((size_t)freenode+(size<<12));
+            freenode_copy->pages = freenode->pages -size;
+            freenode_copy->list_next = freenode->list_next;
+
+            super->list_head->head = freenode_copy;
+        }
+        super->block_array[((size_t)block-(size_t)super->data)>>12] = size;
+        block_endurence_add(block,size);
+        return (void *)block;
+    } else {
+        while(freenodenext !=NULL) {
+            if(freenodenext->pages >= size) {
+                block = freenodenext;
+                if(freenodenext->pages == size) {
+                    freenode->list_next = freenodenext->list_next;
+                } else {
+                    //copy to head.
+                    freenode_copy = (free_list *)((size_t)freenodenext+(size<<12));
+                    freenode_copy->pages  = freenodenext->pages -size;
+                    freenode_copy->list_next = freenodenext->list_next;
+
+                    freenode->list_next = freenode_copy;
+                }
+
+                super->block_array[((size_t)block-(size_t)super->data)>>12] = size;
+                block_endurence_add(block,size);
+                return (void *)block;
+            } else {
+                freenode =  freenodenext;
+                freenodenext = freenodenext->list_next;
+            }
+        }
+    }
+    return NULL;
+}
+// void get_from_Zero_list(){
+//     // This function free all the pages in the list 0;
+//     page_info *tmppage;
+//     int off_slabslot = 0;
+//     int i = 0 ;
+//     free_list * tail_list = super->list_head->head;
+
+// 	page_info * start_addr;
+// 	page_info * end_addr;
+// 	int new_start_flag = 0,new_end_flag;
+// 	int size = 0;
+//     while((super->slab_array[off_slabslot].head) != (super->slab_array[off_slabslot].tail)) {
+//         i ++;
+//         tmppage = super->slab_array[off_slabslot].head;
+//         set_super_page_info_tmp(tmppage,super->page_info_tmp);
+//         page_info *pagei = super->page_info_tmp;
+//         super->slab_array[off_slabslot].head = *pagei->next;
+//         *pagei->next = NULL;
+//         *pagei->pre = NULL;
+//         //printf("i:%d;address:%p\n",i,super->slab_array[off_slabslot].head);
+//         reconf_page(pagei);
+//         if(i == 65536*2){
+//             // 遍历 array[63], get the block allocation space.
+//             //  first , find the free list tail.
+//             int off_slabslot = 63;
+
+//             while((super->slab_array[off_slabslot].head) != NULL) {
+//                 if(new_start_flag == 0) {
+//                 start_addr = super->slab_array[off_slabslot].head;
+//                 end_addr  = super->slab_array[off_slabslot].head;
+//                 new_start_flag = 1;
+//                 size = 1;
+//                 }else{
+//             	    if((size_t)end_addr+0x1000!=(size_t)super->slab_array[off_slabslot].head) { // need to put to the free list.
+//                         // judge if the list tail is NULL.
+
+//                         // generate new  free list.
+//                         free_list * new_free_list = (free_list *)start_addr;
+//                         new_free_list->pages = size;
+//                         new_free_list->list_next = NULL;
+//                         // add to the free list.
+//                         insert_to_free_list(new_free_list);
+
+//                         // updata the addr
+//                         start_addr = super->slab_array[off_slabslot].head;
+//                         end_addr = super->slab_array[off_slabslot].head;
+//                         size = 1;
+//                     }else{ // need to updata the end_addr and the size.
+//                         size ++;
+//                         end_addr = super->slab_array[off_slabslot].head;
+//                     }
+//                 }
+                
+//                 tmppage = super->slab_array[off_slabslot].head;
+//                 set_super_page_info_tmp(tmppage,super->page_info_tmp);
+//                 page_info *pagei = super->page_info_tmp;
+//                 super->slab_array[off_slabslot].head = *pagei->next;
+//                 if(super->slab_array[off_slabslot].head != NULL) {
+//                 set_super_page_info_tmp(super->slab_array[off_slabslot].head,super->page_info_next);
+//                 page_info * page_info_next = super->page_info_next;
+//                 *page_info_next->pre = NULL;
+//                 }
+//                 *pagei->next=NULL;
+//                 *pagei->pre=NULL;
+
+//             }	
+//             break;
+//         }
+//     }
+
+//     if(start_addr == NULL) {
+//         // judge if the list tail is NULL.
+//         // generate new  free list.
+//         free_list * new_free_list = (free_list *)start_addr;
+//         new_free_list->pages = size;
+//         new_free_list->list_next = NULL;
+//         // add to the free list.
+//         insert_to_free_list(new_free_list);
+//         // updata the flag.
+//         new_start_flag = 0;
+//         // updata the addr
+//         start_addr = NULL;
+//         end_addr = NULL;
+//         size = 0;
+//     }
+// }
+void putToSlabZero(superblock *super,void *page) {
+    // The value -1 means that page is in the zero slab. We keep a pointer to reclaim the page.
+    ulong page_index = ((size_t)page -(size_t)super->data ) >> 12;
+    super->block_array[page_index] = -1;
+    return;  
+}
+int reform_pointer = 0;
+void * reform_thread(int size, superblock * sb) {
+
+    for(int p = 0; p < SUM_PAGES; p++) {
+        int i = (reform_pointer + p >= SUM_PAGES) ? (reform_pointer + p - SUM_PAGES) : reform_pointer + p;
+        if(!(i % 10))
+            printf("i:%d\n",i);
+        if(sb->block_array[i] == -1) { 
+            void * page = ((size_t)sb->data + ((size_t)i<<12));
+            page_info * tmppage = sb->page_info_tmp;
+            tmppage->bitmap = (uchar *)page+4032;;
+            tmppage->freenum = (uchar *)tmppage->bitmap+8;
+            tmppage->maxnum= tmppage->freenum + 1;
+            tmppage->offset= tmppage->maxnum + 1;
+            tmppage->next=(ulong *)(tmppage->offset+1);
+            tmppage->pre=(ulong *)((long *)tmppage->next+1);
+            tmppage->leave_endurance = (ulong *)((long *)tmppage->pre+1);
+            tmppage->bitmap_size = (uchar *)(tmppage->leave_endurance+1);
+            if( *(tmppage->freenum) != 0) {
+                sb->block_array[i] = 0;
+                find_longgest_zero(tmppage);
+                if(*(tmppage->maxnum) >= size) {
+                    reform_pointer = i + 1;
+                    return page;
+                } else if(*(tmppage->maxnum) > 0)
+                    reset_page(super->block_array,tmppage);
+            }
+        }
+    }
+    return NULL;
+}
+void * SlabMalloc(size_t size) {
+    void * page = (void *)find_array_suit(size,super->slab_array); 
+    if(page == NULL) {
+        if(super->list_head->head != NULL)
+            page = get_new_page();
+        else {
+//            printf("need reform!\n");
+            page = reform_thread(size,super);
+            if(page == NULL) {
+                printf(" no space! exit.\n");
+                exit(-1);
+            }
+        }
+    }
+
+    /* Get the address of malloc. */
+    page_info *pagei = super->page_info_tmp; //give a space to store address.
+    void *result = (void *)((uchar*)page + ((*pagei->offset)<<6));
+    
+    calc_counter2(result, size);
+
+    set_bit(*pagei->offset, (uchar)size,pagei->bitmap); // !!! must optimaze !!!
+    record_slab_malloc_size(pagei,*pagei->offset,(uchar)size);
+    
+    *pagei->offset += size;
+    *(pagei->maxnum) -= size;
+    *(pagei->freenum) -= size;
+    if(*(pagei->maxnum) > 63)
+        printf("What's wrong?\n");
+    if(*(pagei->freenum) == 0 || *pagei->maxnum == 0) { // Put to the zero list.
+        putToSlabZero(super,page);
+    } else {
+        reset_page(super->slab_array,pagei); // Put to the respoding bucket.
+    }
+    return result;
+} 
+
+void *NVMmalloc(size_t size){ //general function to malloc by using two sub functions
+
+    if (size == 0) {
+        return NULL;
+    }
+    void *result = NULL;
+    size_t slabsize = ((size + MINSIZE-1) >> 6);
+    if (slabsize < 64) {
+        result = SlabMalloc(slabsize);
+    } else {
+        unsigned int blocksize = (size+BLOCKSIZE-1)>>12;
+        result = BlockMalloc(blocksize);
+    }
+    if (result == NULL) {
+        printf("!!!!!!malloc is NULL! @!!!!!!! No spage.!!!\n");
+    }
+
+    return result;
+}
+
+void *NVMcalloc(size_t n, size_t size){
+    void * ptr = NVMmalloc(size*n);
+    memset(ptr, 0, size*n);
+    return ptr;
+}
+#include <stdbool.h>
+void *NVMrealloc(void *ptr,  size_t newsize){
+
+    if(unlikely(ptr==NULL)) // 0. if ptr==NULL, means malloc.  
+        return NVMmalloc(newsize);
+    
+    if(unlikely(!newsize)) { // 1. if newsize if zero , then free the malloc size.
+        NVMfree(ptr);
+        return NULL;
+    }
+
+    size_t old_size = 0; // 2. if newsize <= size, then save the newsize and return.
+    bool isblock = false;
+    int page_id = ((size_t)ptr-(size_t)super->data)/4096;
+    if(!((size_t)ptr-(size_t)super->data)%4096) {
+        if(super->block_array[page_id] > 0) { // block malloc.
+	        old_size = super->block_array[page_id]<<12;
+            if(unlikely(newsize <= old_size))
+                return ptr; // don't need to allocate more space.
+	        else 
+		        isblock = true;
+        }
+    }
+	
+    if(!isblock) {
+        uint page_no = ((size_t)ptr - (size_t)super->data) >> 12;  //no. of the page.
+        page_info * page_addr = (page_info *)((size_t)super->data + ((size_t)page_no<< 12));//address of the page.
+        uint offset = ((size_t)ptr - (size_t)page_addr) >> 6;
+        
+        set_super_page_info_tmp((page_info *)page_addr,super->page_info_tmp);
+        page_info * pagei = super->page_info_tmp;
+
+        old_size = get_slab_free_size(pagei,offset)<<6;
+
+        if(newsize <= old_size) 
+            return ptr;
+    }
+
+
+    // 3. if need new size ,then free and memcpy.
+    void *result = NVMmalloc(newsize);
+    memcpy(result, ptr, old_size);
+    NVMfree(ptr);
+    return result;
+}
+size_t NVMmalloc_size(void *ptr) {
+    void *realptr = (char*)ptr-PREFIX_SIZE;
+    size_t size = *((size_t*)realptr);
+    /* Assume at least that all the allocations are padded at sizeof(long) by
+     * the underlying allocator. */
+    if (size&(sizeof(long)-1)) size += sizeof(long)-(size&(sizeof(long)-1));
+    return size+PREFIX_SIZE;
+}
+//**************************write  by fxl**************************
+
+
+
 /* Explicitly override malloc/free etc when using tcmalloc. */
 #if defined(USE_TCMALLOC)
 #define malloc(size) tc_malloc(size)
 #define calloc(count,size) tc_calloc(count,size)
 #define realloc(ptr,size) tc_realloc(ptr,size)
 #define free(ptr) tc_free(ptr)
+/*
 #elif defined(USE_JEMALLOC)
 #define malloc(size) je_malloc(size)
 #define calloc(count,size) je_calloc(count,size)
 #define realloc(ptr,size) je_realloc(ptr,size)
 #define free(ptr) je_free(ptr)
 #endif
+*/
 
+
+
+
+///*
+#elif defined(USE_JEMALLOC)
+#define malloc(size) NVMmalloc(size)
+#define calloc(count,size) NVMcalloc(count,size)
+#define realloc(ptr,size) NVMrealloc(ptr,size)
+#define free(ptr) NVMfree(ptr)
+#endif
+//*/
 #if defined(__ATOMIC_RELAXED)
 #define update_zmalloc_stat_add(__n) __atomic_add_fetch(&used_memory, (__n), __ATOMIC_RELAXED)
 #define update_zmalloc_stat_sub(__n) __atomic_sub_fetch(&used_memory, (__n), __ATOMIC_RELAXED)

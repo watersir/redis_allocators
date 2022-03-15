@@ -109,6 +109,15 @@ redisClient *createClient(int fd) {
     listSetMatchMethod(c->pubsub_patterns,listMatchObjects);
     if (fd != -1) listAddNodeTail(server.clients,c);
     initClientMultiState(c);
+
+    // fxl: print client.
+    printf("create client:*************************************\n");
+    printf("c->id:%d\n",c->id);
+    printf("c->fd:%d\n",c->fd);
+    printf("c->ctime:%d\n",c->ctime);
+    printf("create client:*************************************\n");
+    // fxl: print client.
+
     return c;
 }
 
@@ -636,16 +645,14 @@ void replicationHandleMasterDisconnection(void) {
     if (server.masterhost != NULL) disconnectSlaves();
 }
 
+extern unsigned int slot_endurance[];
 void freeClient(redisClient *c) {
     listNode *ln;
 
     /* If this is marked as current client unset it */
     if (server.current_client == c) server.current_client = NULL;
 
-    /* If it is our master that's beging disconnected we should make sure
-     * to cache the state to try a partial resynchronization later.
-     *
-     * Note that before doing this we make sure that the client is not in
+    /* If it is our master that'fxlis we make sure that the client is not in
      * some unexpected state, by checking its flags. */
     if (server.master && c->flags & REDIS_MASTER) {
         redisLog(REDIS_WARNING,"Connection with master lost.");
@@ -694,6 +701,26 @@ void freeClient(redisClient *c) {
         aeDeleteFileEvent(server.el,c->fd,AE_READABLE);
         aeDeleteFileEvent(server.el,c->fd,AE_WRITABLE);
         close(c->fd);
+	// fxl: close client in function freeclient.
+	
+    //	printf("close client in function freeclient:***********************\n");
+    //	printf("closed c->id:%d\n",c->id);
+    //	printf("close client in function freeclient:***********************\n");
+        if(((c->id)-2) == 260 || ((c->id)-2) == 260*2 ) {
+
+            printf("now write the endurance in slots; c->id = %d\n",c->id);
+            unsigned long long int write_record = 0;
+            char name2[50] = {0};
+            sprintf(name2,"endurance_wafa_%d_slots_b.txt",((c->id)-2));//%d
+            FILE *fp_p2 = fopen(name2,"w");//"page_endurance_wafa.txt"
+            for(int i = 0; i < SUM_PAGES*64;i++ ){
+                fprintf(fp_p2,"%ld\n",slot_endurance[i]);
+		write_record += slot_endurance[i];
+            }
+            printf("write_record:%ld\n",write_record);
+            fclose(fp_p2);
+        }
+	// fxl: close client in function freeclient.
     }
     listRelease(c->reply);
     freeClientArgv(c);
@@ -849,7 +876,10 @@ void sendReplyToClient(aeEventLoop *el, int fd, void *privdata, int mask) {
         aeDeleteFileEvent(server.el,c->fd,AE_WRITABLE);
 
         /* Close connection after entire reply has been sent. */
-        if (c->flags & REDIS_CLOSE_AFTER_REPLY) freeClient(c);
+        if (c->flags & REDIS_CLOSE_AFTER_REPLY) {
+	    freeClient(c);
+	    printf("**********************************\nfree:c->flags & REDIS_CLOSE_AFTER_REPLY;\n********************************\n");		
+	}
     }
 }
 
@@ -1150,6 +1180,10 @@ void readQueryFromClient(aeEventLoop *el, int fd, void *privdata, int mask) {
     } else if (nread == 0) {
         redisLog(REDIS_VERBOSE, "Client closed connection");
         freeClient(c);
+    // fxl: print client close.
+    printf("close client from readQueryFromClient:*************************************");
+    printf("close client from readQueryFromClient:*************************************");
+    // fxl: print client close.
         return;
     }
     if (nread) {
