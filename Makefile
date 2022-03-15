@@ -14,13 +14,13 @@
 
 release_hdr := $(shell sh -c './mkreleasehdr.sh')
 uname_S := $(shell sh -c 'uname -s 2>/dev/null || echo not')
-OPTIMIZATION?=-O2
+OPTIMIZATION?=-O0 #如果没有被赋值过就赋予等号后面的值
 DEPENDENCY_TARGETS=hiredis linenoise lua
 
 # Default settings
-STD=-std=c99 -pedantic
+#STD= -std=gnu11 -pedantic
 WARN=-Wall -W
-OPT=$(OPTIMIZATION)
+OPT=-O0 #$(OPTIMIZATION)
 
 PREFIX?=/usr/local
 INSTALL_BIN=$(PREFIX)/bin
@@ -47,11 +47,11 @@ ifeq ($(USE_JEMALLOC),yes)
 endif
 
 # Override default settings if possible
--include .make-settings
+-include .make-settings  #???
 
-FINAL_CFLAGS=$(STD) $(WARN) $(OPT) $(DEBUG) $(CFLAGS) $(REDIS_CFLAGS)
-FINAL_LDFLAGS=$(LDFLAGS) $(REDIS_LDFLAGS) $(DEBUG)
-FINAL_LIBS=-lm
+FINAL_CFLAGS= $(WARN) $(OPT) $(DEBUG) $(CFLAGS) $(REDIS_CFLAGS)  #$(STD) $(OPT)
+FINAL_LDFLAGS=$(LDFLAGS) -O0  $(REDIS_LDFLAGS) $(DEBUG)
+FINAL_LIBS=-lm -lpthread -fgnu89-inline
 DEBUG=-g -ggdb
 
 ifeq ($(uname_S),SunOS)
@@ -71,7 +71,7 @@ ifeq ($(uname_S),AIX)
 else
 	# All the other OSes (notably Linux)
 	FINAL_LDFLAGS+= -rdynamic
-	FINAL_LIBS+= -pthread
+	FINAL_LIBS+= -pthread -lpthread -fgnu89-inline
 endif
 endif
 endif
@@ -91,7 +91,7 @@ endif
 ifeq ($(MALLOC),jemalloc)
 	DEPENDENCY_TARGETS+= jemalloc
 	FINAL_CFLAGS+= -DUSE_JEMALLOC -I../deps/jemalloc/include
-	FINAL_LIBS+= ../deps/jemalloc/lib/libjemalloc.a -ldl
+	FINAL_LIBS+= ../deps/jemalloc/lib/libjemalloc.a -ldl -lpthread -fgnu89-inline
 endif
 
 REDIS_CC=$(QUIET_CC)$(CC) $(FINAL_CFLAGS)
@@ -111,11 +111,14 @@ QUIET_LINK = @printf '    %b %b\n' $(LINKCOLOR)LINK$(ENDCOLOR) $(BINCOLOR)$@$(EN
 QUIET_INSTALL = @printf '    %b %b\n' $(LINKCOLOR)INSTALL$(ENDCOLOR) $(BINCOLOR)$@$(ENDCOLOR) 1>&2;
 endif
 
+
+#NVM_MALLOC = nvm_malloc/tree.o nvm_malloc/object_table.o nvm_malloc/util.o nvm_malloc/chunk.o nvm_malloc/arena.o nvm_malloc/nvm_malloc.o
+
 REDIS_SERVER_NAME=redis-server
 REDIS_SENTINEL_NAME=redis-sentinel
-REDIS_SERVER_OBJ=adlist.o ae.o anet.o dict.o redis.o sds.o zmalloc.o lzf_c.o lzf_d.o pqsort.o zipmap.o sha1.o ziplist.o release.o networking.o util.o object.o db.o replication.o rdb.o t_string.o t_list.o t_set.o t_zset.o t_hash.o config.o aof.o pubsub.o multi.o debug.o sort.o intset.o syncio.o migrate.o endianconv.o slowlog.o scripting.o bio.o rio.o rand.o memtest.o crc64.o bitops.o sentinel.o notify.o setproctitle.o hyperloglog.o latency.o sparkline.o
+REDIS_SERVER_OBJ=adlist.o ae.o anet.o dict.o redis.o sds.o zmalloc.o lzf_c.o lzf_d.o pqsort.o zipmap.o sha1.o ziplist.o release.o networking.o util.o object.o db.o replication.o rdb.o t_string.o t_list.o t_set.o t_zset.o t_hash.o config.o aof.o pubsub.o multi.o debug.o sort.o intset.o syncio.o migrate.o endianconv.o slowlog.o scripting.o bio.o rio.o rand.o memtest.o crc64.o bitops.o sentinel.o notify.o setproctitle.o hyperloglog.o latency.o sparkline.o hash_chain_prot.o tree.o object_table.o chunk.o arena.o nvm_malloc.o
 REDIS_CLI_NAME=redis-cli
-REDIS_CLI_OBJ=anet.o sds.o adlist.o redis-cli.o zmalloc.o release.o anet.o ae.o crc64.o
+REDIS_CLI_OBJ=anet.o sds.o adlist.o redis-cli.o zmalloc.o release.o anet.o ae.o crc64.o util.o hash_chain_prot.o tree.o object_table.o chunk.o arena.o nvm_malloc.o
 REDIS_BENCHMARK_NAME=redis-benchmark
 REDIS_BENCHMARK_OBJ=ae.o anet.o redis-benchmark.o sds.o adlist.o zmalloc.o redis-benchmark.o
 REDIS_CHECK_DUMP_NAME=redis-check-dump
@@ -123,7 +126,7 @@ REDIS_CHECK_DUMP_OBJ=redis-check-dump.o lzf_c.o lzf_d.o crc64.o
 REDIS_CHECK_AOF_NAME=redis-check-aof
 REDIS_CHECK_AOF_OBJ=redis-check-aof.o
 
-all: $(REDIS_SERVER_NAME) $(REDIS_SENTINEL_NAME) $(REDIS_CLI_NAME) $(REDIS_BENCHMARK_NAME) $(REDIS_CHECK_DUMP_NAME) $(REDIS_CHECK_AOF_NAME)
+all: $(REDIS_SERVER_NAME) $(REDIS_SENTINEL_NAME) $(REDIS_CLI_NAME) $(REDIS_CHECK_DUMP_NAME) $(REDIS_CHECK_AOF_NAME) 
 	@echo ""
 	@echo "Hint: It's a good idea to run 'make test' ;)"
 	@echo ""
@@ -139,7 +142,7 @@ dep:
 .PHONY: dep
 
 persist-settings: distclean
-	echo STD=$(STD) >> .make-settings
+#	echo STD=$(STD) >> .make-settings
 	echo WARN=$(WARN) >> .make-settings
 	echo OPT=$(OPT) >> .make-settings
 	echo MALLOC=$(MALLOC) >> .make-settings
@@ -167,7 +170,7 @@ ifneq ($(strip $(PREV_FINAL_LDFLAGS)), $(strip $(FINAL_LDFLAGS)))
 endif
 
 # redis-server
-$(REDIS_SERVER_NAME): $(REDIS_SERVER_OBJ)
+$(REDIS_SERVER_NAME): $(REDIS_SERVER_OBJ) 
 	$(REDIS_LD) -o $@ $^ ../deps/hiredis/libhiredis.a ../deps/lua/src/liblua.a $(FINAL_LIBS)
 
 # redis-sentinel
@@ -179,8 +182,8 @@ $(REDIS_CLI_NAME): $(REDIS_CLI_OBJ)
 	$(REDIS_LD) -o $@ $^ ../deps/hiredis/libhiredis.a ../deps/linenoise/linenoise.o $(FINAL_LIBS)
 
 # redis-benchmark
-$(REDIS_BENCHMARK_NAME): $(REDIS_BENCHMARK_OBJ)
-	$(REDIS_LD) -o $@ $^ ../deps/hiredis/libhiredis.a $(FINAL_LIBS)
+#$(REDIS_BENCHMARK_NAME): $(REDIS_BENCHMARK_OBJ)
+#	$(REDIS_LD) -o $@ $^ ../deps/hiredis/libhiredis.a $(FINAL_LIBS)
 
 # redis-check-dump
 $(REDIS_CHECK_DUMP_NAME): $(REDIS_CHECK_DUMP_OBJ)

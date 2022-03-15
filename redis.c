@@ -3212,7 +3212,28 @@ void redisSetProcTitle(char *title) {
 #endif
 }
 
+#include <fcntl.h> 
+#include<sys/mman.h>
+//#include "nvm_malloc.h"
+#include "arena.h"
+
 int main(int argc, char **argv) {
+
+    // fxl
+    printf("enter redis:<main>;\n");
+
+    int fd = open("/dev/pmem0",O_RDWR);
+    if(fd== -1) {
+        printf(" wrong !  ");
+        return 0;
+    }
+    printf("%d\n",sizeof(struct nvm_block_header_s));
+    printf("%d\n",sizeof(nvm_huge_header_t));
+    printf("%d\n",sizeof(struct arena_run_s));
+    nvm_initialize("/mnt/nvm", 0,fd);
+    // fxl
+
+
     struct timeval tv;
 
     /* We need to initialize our libraries, and the server configuration. */
@@ -3320,7 +3341,10 @@ int main(int argc, char **argv) {
     aeSetBeforeSleepProc(server.el,beforeSleep);
     aeMain(server.el);
     aeDeleteEventLoop(server.el);
+
     return 0;
+
+	
 }
 
 /* The End */

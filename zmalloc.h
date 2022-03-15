@@ -30,10 +30,16 @@
 
 #ifndef __ZMALLOC_H
 #define __ZMALLOC_H
+#include <stdio.h>
 
 /* Double expansion needed for stringification of macro values. */
 #define __xstr(s) __str(s)
 #define __str(s) #s
+
+// fxl
+#define DEVICE_SIZE  0x400000000   //  2G=0x80000000;3G=0xc0000000;4G=0x100000000;
+#define	SUM_PAGES    (DEVICE_SIZE / 4096)
+// fxl
 
 #if defined(USE_TCMALLOC)
 #define ZMALLOC_LIB ("tcmalloc-" __xstr(TC_VERSION_MAJOR) "." __xstr(TC_VERSION_MINOR))
@@ -50,7 +56,7 @@
 #include <jemalloc/jemalloc.h>
 #if (JEMALLOC_VERSION_MAJOR == 2 && JEMALLOC_VERSION_MINOR >= 1) || (JEMALLOC_VERSION_MAJOR > 2)
 #define HAVE_MALLOC_SIZE 1
-#define zmalloc_size(p) je_malloc_usable_size(p)
+#define zmalloc_size(p) NVMmalloc_size(p)//je_malloc_usable_size(p)
 #else
 #error "Newer version of jemalloc required"
 #endif
@@ -81,5 +87,19 @@ void zlibc_free(void *ptr);
 #ifndef HAVE_MALLOC_SIZE
 size_t zmalloc_size(void *ptr);
 #endif
+
+//**************************write  by fxl**************************
+
+#define unlikely(x)     __builtin_expect(!!(x), 0)
+/*
+void * NVMmalloc(size_t size);
+void * NVMcalloc(count,size);
+void * NVMrealloc(void * ptr,size_t newsize);
+size_t NVMmalloc_size(void *ptr);
+void NVMfree(void *ptr);*/
+
+//**************************write  by fxl**************************
+
+
 
 #endif /* __ZMALLOC_H */

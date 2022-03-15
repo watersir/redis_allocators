@@ -1,0 +1,17 @@
+
+
+// min size is 64.
+
+sizeof INITIAL_ARENAS * sizeof(arena_t*):160
+
+sizeof arena_t:2040
+
+
+sizeof arena_block_t:48
+
+sizeof huge_t:40
+
+sizeof arena_run_t:64
+
+sizeof object_table_entry_t:80
+

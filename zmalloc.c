@@ -27,10 +27,11 @@
  * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGE.
  */
-
+#include "zmalloc.h"
+#include "nvm_malloc.h"
 #include <stdio.h>
 #include <stdlib.h>
-
+#include <stddef.h>
 /* This function provide us access to the original libc free(). This is useful
  * for instance to free results obtained by backtrace_symbols(). We need
  * to define this function before including zmalloc.h that may shadow the
@@ -42,7 +43,6 @@ void zlibc_free(void *ptr) {
 #include <string.h>
 #include <pthread.h>
 #include "config.h"
-#include "zmalloc.h"
 
 #ifdef HAVE_MALLOC_SIZE
 #define PREFIX_SIZE (0)
@@ -54,19 +54,130 @@ void zlibc_free(void *ptr) {
 #endif
 #endif
 
+//**************************write  by fxl**************************
+
+unsigned int slot_endurance[SUM_PAGES * 64] = {0};
+
+void slot_counter(void * ptr, int size) {
+
+    unsigned int start_id = ((size_t)ptr)>>6;
+    for(int i = 0 ; i < ((size+63)>>6);i++){
+        slot_endurance[(start_id+i)%(SUM_PAGES<<6)]++;
+	}
+}
+void * NVMmalloc(size_t size) {
+	void * ptr = (void *) nvm_reserve(size);  
+	nvm_activate((void*) ptr,NULL,NULL,NULL,NULL);
+	return ptr;
+}
+
+void * NVMcalloc(int n,size_t size) {
+	void * ptr = NVMmalloc(size*n);
+    memset(ptr, 0, size*n);
+    return ptr;    
+}
+#include <stdbool.h>
+#include "arena.h"
+//#include "types.h"
+extern void *nvm_start;
+void * NVMrealloc(void * ptr,size_t newsize) {
+    // 0. if ptr==NULL, means malloc.
+    if(unlikely(ptr==NULL))  
+	    return NVMmalloc(newsize);
+    
+    // 1. if newsize if zero , then free the malloc size.
+    if(unlikely(!newsize)) {
+        NVMfree(ptr);
+        return NULL;
+    }
+
+     size_t old_size = 0;
+    // // 2. if newsize <= size, then save the newsize and return.
+    // // For nvm_malloc, we need first get the type of the address.
+    // if((size_t)ptr%4096 >= 64) { // Areana < 2048-64
+    //     struct arena_run_s *run = (size_t)ptr-((size_t)ptr%4096);
+    //     old_size = run->elem_size;
+    // } else if((size_t)ptr%4096 == sizeof(struct nvm_block_header_s)) {
+    //     struct nvm_block_header_s * nvm_block = (size_t)ptr-((size_t)ptr%4096);
+    //     old_size = nvm_block->n_pages*4096 - sizeof(struct nvm_block_header_s);
+    // } else {
+    //     nvm_huge_header_t *nvm_huge = (size_t)ptr-((size_t)ptr%4096);
+    //     old_size = nvm_huge->n_chunks*CHUNK_SIZE-sizeof(nvm_huge_header_t);
+    // }
+
+    size_t oldsize = 0;
+
+	nvm_block_header_t *nvm_block = (nvm_block_header_t*) ((uintptr_t)ptr & ~4095);
+
+	if (GET_USAGE(nvm_block->state) == USAGE_BLOCK) {
+ //       printf("block\n");
+		oldsize = ((nvm_block->n_pages)<<12)-sizeof(nvm_block);
+	} else if(GET_USAGE(nvm_block->state) == USAGE_RUN) {
+ //       printf("run\n");
+        nvm_run_header_t *nvm_run = (nvm_run_header_t*) nvm_block;
+		oldsize = nvm_run->n_bytes;
+	} else if(GET_USAGE(nvm_block->state) == USAGE_HUGE) {
+        printf("huge!!!\n");
+        nvm_huge_header_t *nvm_huge = (size_t)ptr-((size_t)ptr%4096);
+        old_size = nvm_huge->n_chunks*CHUNK_SIZE-sizeof(nvm_huge_header_t);
+    } else {
+        printf("erro!\n");
+    }
+    old_size = oldsize;
+    
+    if(old_size >= newsize)
+        return ptr;
+
+    // 3. if need new size ,then free and memcpy.
+    void *result = NVMmalloc(newsize);
+ //   printf("new:%p\n",result);
+    memcpy(result, ptr, old_size);
+    NVMfree(ptr);
+    return result;
+}
+size_t NVMmalloc_size(void *ptr) {
+    void *realptr = (char*)ptr-PREFIX_SIZE;
+    size_t size = *((size_t*)realptr);
+    /* Assume at least that all the allocations are padded at sizeof(long) by
+     * the underlying allocator. */
+    if (size&(sizeof(long)-1)) 
+        size += sizeof(long)-(size&(sizeof(long)-1));
+    return size+PREFIX_SIZE;
+}
+
+void NVMfree(void *ptr) {
+    nvm_free((void *)ptr,NULL,NULL,NULL,NULL);
+}
+//**************************write  by fxl**************************
+
+
+
 /* Explicitly override malloc/free etc when using tcmalloc. */
 #if defined(USE_TCMALLOC)
 #define malloc(size) tc_malloc(size)
 #define calloc(count,size) tc_calloc(count,size)
 #define realloc(ptr,size) tc_realloc(ptr,size)
 #define free(ptr) tc_free(ptr)
+/*
 #elif defined(USE_JEMALLOC)
 #define malloc(size) je_malloc(size)
 #define calloc(count,size) je_calloc(count,size)
 #define realloc(ptr,size) je_realloc(ptr,size)
 #define free(ptr) je_free(ptr)
 #endif
+*/
 
+
+
+
+///*
+#elif defined(USE_JEMALLOC)
+#define malloc(size) NVMmalloc(size)
+#define calloc(count,size) NVMcalloc(count,size)
+#define realloc(ptr,size) NVMrealloc(ptr,size)
+#define free(ptr) NVMfree(ptr)
+#endif
+//*/
 #if defined(__ATOMIC_RELAXED)
 #define update_zmalloc_stat_add(__n) __atomic_add_fetch(&used_memory, (__n), __ATOMIC_RELAXED)
 #define update_zmalloc_stat_sub(__n) __atomic_sub_fetch(&used_memory, (__n), __ATOMIC_RELAXED)
@@ -124,6 +235,10 @@ static void (*zmalloc_oom_handler)(size_t) = zmalloc_default_oom;
 void *zmalloc(size_t size) {
     void *ptr = malloc(size+PREFIX_SIZE);
 
+    // for fxl	: it is not ture.
+    slot_counter(ptr,size+PREFIX_SIZE);
+    // for fxl 
+
     if (!ptr) zmalloc_oom_handler(size);
 #ifdef HAVE_MALLOC_SIZE
     update_zmalloc_stat_alloc(zmalloc_size(ptr));
@@ -137,6 +252,10 @@ void *zmalloc(size_t size) {
 
 void *zcalloc(size_t size) {
     void *ptr = calloc(1, size+PREFIX_SIZE);
+
+    // for fxl	: it is not ture.
+    slot_counter(ptr,size+PREFIX_SIZE);
+    // for fxl 
 
     if (!ptr) zmalloc_oom_handler(size);
 #ifdef HAVE_MALLOC_SIZE

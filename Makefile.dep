@@ -130,3 +130,5 @@ ziplist.o: ziplist.c zmalloc.h util.h sds.h ziplist.h endianconv.h \
   config.h redisassert.h
 zipmap.o: zipmap.c zmalloc.h endianconv.h config.h
 zmalloc.o: zmalloc.c config.h zmalloc.h
+tree.o: tree.c tree.h
+
