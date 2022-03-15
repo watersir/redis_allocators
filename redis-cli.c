@@ -1870,8 +1870,32 @@ static void intrinsicLatencyMode(void) {
 /*------------------------------------------------------------------------------
  * Program main()
  *--------------------------------------------------------------------------- */
-
+#include<sys/mman.h>
+extern unsigned int * slot_endurance;
 int main(int argc, char **argv) {
+
+
+    // fxl
+    printf("enter redis-cli;\n");
+    slot_endurance = calloc(SUM_PAGES*64,sizeof(unsigned int));
+    void * ret  = mmap(0x7f0000000000,NVM_SIZE, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS,-1, 0);
+    if (ret == MAP_FAILED){
+        printf("Mmap failed! Exit.\n");
+        exit(0);
+	}
+
+    printf("ret:%p\n",ret);
+
+ /*   int fd = open("/dev/pmem0",O_RDWR);
+    void * addr = mmap((void *)FREELIST,DEVICE_SIZE,PROT_READ|PROT_WRITE,MAP_SHARED,fd,0);//FREELIST
+    printf("++++++++++  initNVM fd : %d ++++++++++++\n", fd);
+    printf("++++++++++  addr : %p ++++++++++++\n", addr);
+    if(fd== -1) {
+        printf(" wrong !  ");
+        return 0;
+    }*/
+    NVMinit();
+    // fxl
     int firstarg;
 
     config.hostip = sdsnew("127.0.0.1");
@@ -1974,4 +1998,8 @@ int main(int argc, char **argv) {
     } else {
         return noninteractive(argc,convertToSds(argc,argv));
     }
+    // fxl
+    munmap((void *)ADDR,NVM_SIZE); //解除映射
+//    close(fd);
+    // fxl
 }

@@ -30,6 +30,7 @@
 
 #ifndef __ZMALLOC_H
 #define __ZMALLOC_H
+#include <stdio.h>
 
 /* Double expansion needed for stringification of macro values. */
 #define __xstr(s) __str(s)
@@ -50,7 +51,7 @@
 #include <jemalloc/jemalloc.h>
 #if (JEMALLOC_VERSION_MAJOR == 2 && JEMALLOC_VERSION_MINOR >= 1) || (JEMALLOC_VERSION_MAJOR > 2)
 #define HAVE_MALLOC_SIZE 1
-#define zmalloc_size(p) je_malloc_usable_size(p)
+#define zmalloc_size(p) NVMmalloc_size(p)//je_malloc_usable_size(p)
 #else
 #error "Newer version of jemalloc required"
 #endif
@@ -82,4 +83,104 @@ void zlibc_free(void *ptr);
 size_t zmalloc_size(void *ptr);
 #endif
 
+//**************************write  by fxl**************************
+
+#define unlikely(x)     __builtin_expect(!!(x), 0)
+
+typedef unsigned int uint;
+typedef unsigned long ulong;
+typedef unsigned char uchar;
+
+#define DEVICE_SIZE  0x40000000   //  2G=0x80000000;4G=0x100000000;
+#define NVM_SIZE     0x408004000
+#define	SUM_PAGES    (DEVICE_SIZE / 4096) // 4194304
+#define ADDR   0x7f0000000000
+#define super_block  0x7f0000000000
+#define MINSIZE   64
+#define BLOCKSIZE 4096
+
+#define couter_array_size  (SUM_PAGES * 4)  // ???
+
+#define LIST_NUM 10
+#define free_list_head_size  1500
+#define slab_array_size  64
+#define buffer_size 500*1024*1024
+
+#define         MAX_ENDURANCE 1500 //(1500 * 4)
+#define         MIN_ENDURANCE 30   //(30 * 4)
+
+#define			IMMIGRATION_LIMIT (4096 * 10)
+#define			CHANGE_LIST_LIMIT (512 * 10)
+
+#pragma pack(1)
+typedef struct page_info{  // I will put it in the pages. //not very good.
+    uchar *bitmap; // 8
+    uchar *freenum; // 1
+    uchar *maxnum; // 1
+    uchar *offset; // 1
+    ulong  *next; // 8
+    ulong  *pre; // 8
+    long *leave_endurance; //8
+    uchar *bitmap_size;  //8
+}page_info;
+#pragma pack()
+
+
+typedef struct slab_page_array{
+    page_info *head;
+    page_info *tail;
+}slab_page_array;
+
+typedef struct list_head{ // I use single list to store the free blocks.
+    struct free_list *head; // 第一个list_tail是有用的，多的都没用。
+}list_head;
+
+typedef struct free_list{ // I use single list to store the free blocks.
+    ulong pages;
+    struct free_list *list_next; // 第一个list_tail是有用的，多的都没用。
+}free_list;
+
+typedef struct superblock{
+    //uint *
+    uint *listpointer; //...this pointer to the head of list,rank(0-9),each time plus one ;
+    slab_page_array *slab_array; //???...add to 10 slab_array,just calculate the number of slab_array.
+    list_head *list_head[LIST_NUM]; //???...add to 10 free list.
+    ulong *sum_pages_list; //...add to store sum pages of each list. 10
+    ulong *sum_pages_slab; //...add to store pages of each slot. 640
+    long *endurance_limit; //...add to store endurance limit of each list. 10
+
+    ulong *block_array;
+    ulong *page_endurance;
+
+    page_info *page_info_tmp;
+    page_info *page_info_pre;
+    page_info *page_info_next;
+    char *data;
+
+    char *reservedblocks;
+    int rsvdblock_number;
+}superblock;
+
+typedef struct rsvdblock_head{
+    int nPages;
+}rsvdblock_head;
+//  *************** This is my help function *************************//
+typedef struct max_array{  // I will put it in the pages. //not very good.
+    int left_max;
+    int middle_max;
+    int right_max;
+}max_array;
+typedef struct off_array{  // I will put it in the pages. //not very good.
+    int left_off;
+    int middle_off;
+    int right_off;
+}off_array;
+
+/*
+struct max_array help_max[256];
+struct off_array help_off[256];
+*/
+
+
+//**************************write  by fxl**************************
 #endif /* __ZMALLOC_H */
