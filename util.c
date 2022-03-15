@@ -41,6 +41,186 @@
 
 #include "util.h"
 
+
+//fxl
+
+//14669
+#include "util.h"
+
+#include "types.h"
+#include <fcntl.h> 
+#include<sys/mman.h>
+#define MAP_ANONYMOUS 32
+
+/*
+INITIAL_ARENAS * sizeof(arena_t*):	8
+arena_t * 			 :	2040
+arena_block_t * 		 :	48
+arena_run_t* 			 :	64
+huge_t * 			 :	40
+arena_t ** 			 :	8
+object_table_entry      :  80
+arena_t **  
+*/
+size_t sbrk_init_address;
+size_t sbrk_end_address;
+#define UNITNUM 655360*8
+#define UNITSIZE 64
+char bitmapsbrk[UNITNUM/8] = {0};
+char sbrk_start_address[UNITSIZE*UNITNUM] = {0};
+int start_i = 0;
+  // 96 M is ok.
+void set_bit(int pos,unsigned char length,char * bitmap) {
+    for( int i = 0; i < length; i++) {
+        int setpos = pos+i;
+        bitmap[setpos/8]|=0X01<<(setpos%8);
+    }
+
+}
+void reset_bit(int pos,unsigned char length,char * bitmap) {
+    for( int i = 0; i < length; i++) {
+        int location = pos+i;
+        bitmap[location/8]=bitmap[location/8]&(0xFF^(0X01<<(location%8)));
+    }
+}
+int get_bit(int pos,char * bitmap) {
+    return ((bitmap[pos/8]&(0X01<<(pos%8)))!=0);
+}
+int find_first_n(int start_pos, int end_pos, char * bitmap, int size) {
+    
+    int find_size = 0;
+    
+    for(; start_pos < end_pos; start_pos++ ) {
+        if(!get_bit(start_pos,bitmap))
+            find_size ++;
+        else
+            find_size = 0;
+
+        if(find_size == size)
+            return start_pos-size+1;
+    }
+
+    return -1;
+}
+void *mysbrk(size_t size) { 
+
+    int size_bit = (size+63)/UNITSIZE; 
+
+    int loc = find_first_n(start_i,UNITNUM,bitmapsbrk,size_bit);
+    if(loc == -1) {
+        loc = find_first_n(0,start_i,bitmapsbrk,size_bit);
+    }
+
+    if(loc != -1) {
+        start_i = loc + size_bit;
+        set_bit(loc,size_bit,bitmapsbrk);
+        return  (void *)(sbrk_start_address+(size_t)loc*UNITSIZE);
+    }
+
+    printf("ERRO: sbrk has no space!\n");
+    exit(0);
+}
+void mysbrkfree(void * ptr,int size) {
+    int size_bit = (size+63)/UNITSIZE;
+    int pos = ((size_t)ptr-(size_t)sbrk_start_address)/UNITSIZE;
+
+ 	reset_bit(pos,size_bit,bitmapsbrk);
+}
+
+
+extern void *nvm_start;
+
+uint64_t round_up(uint64_t num, uint64_t multiple) {
+    uint64_t rest = 0;
+    if (multiple == 0)
+        return num;
+    rest = num % multiple;
+    if (rest == 0)
+        return num;
+    return num + multiple - rest;
+}
+
+char identify_usage(void *ptr) {
+    /* find out if ptr points to a small, large or huge region */
+    nvm_block_header_t *nvm_block = NULL;
+    uintptr_t rel_ptr = (uintptr_t)ptr - (uintptr_t)nvm_start;
+    if (rel_ptr % CHUNK_SIZE == sizeof(nvm_huge_header_t)) {
+        /* ptr is 64 bytes into a chunk, must be huge allocation */
+        return USAGE_HUGE;
+    } else if (rel_ptr % BLOCK_SIZE > sizeof(nvm_block_header_t)) {
+        /* ptr is more than 64 bytes into a block, must be a small allocation */
+        return USAGE_RUN;
+    } else if (rel_ptr % BLOCK_SIZE == sizeof(nvm_block_header_t)) {
+        /* ptr is exactly 64 bytes into a block, can be either small or large --> now we must check header */
+        nvm_block = (nvm_block_header_t*) ((uintptr_t)ptr - sizeof(nvm_block_header_t));
+        if (GET_USAGE(nvm_block->state) == USAGE_BLOCK || GET_USAGE(nvm_block->state) == USAGE_FREE) {
+            return USAGE_BLOCK;
+        } else {
+            return USAGE_RUN;
+        }
+    } else {
+        /* if we get here something went wrong... */
+        return (char)-1;
+    }
+}
+
+void clflush(const void *ptr) {
+//    return;
+    asm volatile("clflush %0" : "+m" (ptr));
+}
+
+void clflush_range(const void *ptr, uint64_t len) {
+    uintptr_t start = (uintptr_t)ptr & ~(CACHE_LINE_SIZE-1);
+    for (; start < (uintptr_t)ptr + len; start += CACHE_LINE_SIZE) {
+        clflush((void*)start);
+    }
+}
+
+#ifdef HAS_CLFLUSHOPT
+void clflushopt(const void *ptr) {
+//    return;
+    asm volatile("clflushopt %0" : "+m" (ptr));
+}
+
+void clflushopt_range(const void *ptr, uint64_t len) {
+    uintptr_t start = (uintptr_t)ptr & ~(CACHE_LINE_SIZE-1);
+    for (; start < (uintptr_t)ptr + len; start += CACHE_LINE_SIZE) {
+        clflushopt((void*)start);
+    }
+}
+#endif
+
+#ifdef HAS_CLWB
+void clwb(const void *ptr) {
+//    return;
+    asm volatile("clwb %0" : "+m" (ptr));
+}
+
+void clwb_range(const void *ptr, uint64_t len) {
+    uintptr_t start = (uintptr_t)ptr & ~(CACHE_LINE_SIZE-1);
+    for (; start < (uintptr_t)ptr + len; start += CACHE_LINE_SIZE) {
+        clwb((void*)start);
+    }
+}
+#endif
+
+void sfence() {
+//    return;
+#ifndef NOFENCE
+    asm volatile("sfence":::"memory");
+#endif
+}
+
+void mfence() {
+//    return;
+#ifndef NOFENCE
+    asm volatile("mfence":::"memory");
+#endif
+}
+//
+
+
+
 /* Glob-style pattern matching. */
 int stringmatchlen(const char *pattern, int patternLen,
         const char *string, int stringLen, int nocase)

@@ -3214,29 +3214,23 @@ void redisSetProcTitle(char *title) {
 
 #include <fcntl.h> 
 #include<sys/mman.h>
-//extern unsigned int slot_endurance[];
+//#include "nvm_malloc.h"
+#include "arena.h"
+
 int main(int argc, char **argv) {
 
     // fxl
-//    slot_endurance = calloc(SUM_PAGES*64,sizeof(unsigned int));
-    printf("enter redis-server;\n");
-    void * ret  = mmap(ADDR,NVM_SIZE, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS,-1, 0);
-    if (ret == MAP_FAILED){
-        printf("Mmap failed! Exit.\n");
-        exit(0);
-	}
+    printf("enter redis:<main>;\n");
 
-    printf("ret:%p\n",ret);
-
- /*   int fd = open("/dev/pmem0",O_RDWR);
-    void * addr = mmap((void *)FREELIST,DEVICE_SIZE,PROT_READ|PROT_WRITE,MAP_SHARED,fd,0);//FREELIST
-    printf("++++++++++  initNVM fd : %d ++++++++++++\n", fd);
-    printf("++++++++++  addr : %p ++++++++++++\n", addr);
+    int fd = open("/dev/pmem0",O_RDWR);
     if(fd== -1) {
         printf(" wrong !  ");
         return 0;
-    }*/
-    NVMinit();
+    }
+    printf("%d\n",sizeof(struct nvm_block_header_s));
+    printf("%d\n",sizeof(nvm_huge_header_t));
+    printf("%d\n",sizeof(struct arena_run_s));
+    nvm_initialize("/mnt/nvm", 0,fd);
     // fxl
 
 
@@ -3347,11 +3341,6 @@ int main(int argc, char **argv) {
     aeSetBeforeSleepProc(server.el,beforeSleep);
     aeMain(server.el);
     aeDeleteEventLoop(server.el);
-
-    // fxl
-    munmap((void *)ADDR,NVM_SIZE); //解除映射
-//    close(fd);
-    // fxl
 
     return 0;
 
