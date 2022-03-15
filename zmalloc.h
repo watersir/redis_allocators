@@ -91,35 +91,16 @@ typedef unsigned int uint;
 typedef unsigned long ulong;
 typedef unsigned char uchar;
 
+#define ADDR 0x7f0000000000
 #define DEVICE_SIZE  0x400000000   //  2G=0x80000000;3G=0xc0000000;4G=0x100000000;
 #define NVM_SIZE     (DEVICE_SIZE + 0x8004000)
 #define	SUM_PAGES    (DEVICE_SIZE / 4096)  // = 4194304
-#define ADDR         0x7f0040000000 //0x7f0100000000   //4G
-#define TAIL         0x7f0100000000 //0x7f02fffff000   //8G
-#define FREELIST     0x7f0000000000   //7f0000000000
 #define super_block  0x7f0000000000
-#define BLOCKMASK    0x7f0000000020
 #define MINSIZE   64
 #define BLOCKSIZE 4096
-#define MAXBLOCKS 0xc0000         //8G num of pages
-#define BLOCKMINS 256
 
-#define couter_array_size  (SUM_PAGES * sizeof(uint))    //这里表示的是用一个东西计算每个page的allocate次数。
-#define free_list_head_size  1500
+
 #define slab_array_size  64
-
-#define SLAB      0x7f0000800020  //8M
-#define HIGH      0x7f00fffff000
-#define LOW       0x000000000fff
-
-#define         MAX_ENDURANCE (1500 * 4)
-#define         MIN_ENDURANCE (30 * 4)
-typedef struct node{
-    void *head;
-    size_t size;
-    struct node *pre;
-    struct node *next;
-} node;
 
 #pragma pack(1)
 typedef struct page_info{  // I will put it in the pages. //not very good.
@@ -139,13 +120,16 @@ typedef struct slab_page_array{
     page_info *head;
     page_info *tail;
 }slab_page_array;
+
 typedef struct list_head{ // I use single list to store the free blocks.
     struct free_list *head; // 第一个list_tail是有用的，多的都没用。
 }list_head;
+
 typedef struct free_list{ // I use single list to store the free blocks.
     ulong pages;
     struct free_list *list_next; // 第一个list_tail是有用的，多的都没用。
 }free_list;
+
 typedef struct superblock{
     slab_page_array *slab_array; 
     list_head *list_head; // record the freelisthead. the list...
@@ -156,8 +140,13 @@ typedef struct superblock{
     page_info *page_info_pre;
     page_info *page_info_next;
     char *data;
+    char *reservedblocks;
+    int rsvdblock_number;
 }superblock;
 
+typedef struct rsvdblock_head{
+    int nPages;
+}rsvdblock_head;
 
 //  *************** This is my help function *************************//
 typedef struct max_array{  // I will put it in the pages. //not very good.

@@ -63,6 +63,8 @@ void zlibc_free(void *ptr) {
 #include <fcntl.h>*/
 unsigned int slot_endurance[SUM_PAGES*64] = {0};
 superblock *super =  (superblock *)super_block;
+char reservedbits[24579 / 8 + 1] = {0}; // The size will change!
+
 int set_super_page_info_tmp(page_info *page,page_info *page_info_tmp) {
     page_info *pagei = page_info_tmp;
     pagei->bitmap = (uchar *)page+4032;
@@ -83,23 +85,38 @@ void calc_counter2(void * result,uint size) {
 
 }
 
-void set_bit(unsigned char pos,unsigned char length,char * bitmap) {
+void set_bit(unsigned int pos, unsigned int length, char * bitmap) {
     for( int i = 0; i < length; i++) {
         int setpos = pos+i;
         bitmap[setpos/8]|=0X01<<(setpos%8);
     }
 
 }
-void reset_bit(unsigned char pos,unsigned char length,char * bitmap) {
+void reset_bit(unsigned int pos, unsigned int length, char * bitmap) {
     for( int i = 0; i < length; i++) {
         int location = pos+i;
         bitmap[location/8]=bitmap[location/8]&(0xFF^(0X01<<(location%8)));
     }
 }
-int get_bit(unsigned char pos,char * bitmap) {
+int get_bit(unsigned int pos, char * bitmap) {
     return ((bitmap[pos/8]&(0X01<<(pos%8)))!=0);
 }
+int find_first_n(int start_pos, int end_pos, char * bitmap, int size) {
+    
+    int find_size = 0;
+    
+    for(; start_pos < end_pos; start_pos++ ) {
+        if(!get_bit(start_pos,bitmap))
+            find_size ++;
+        else
+            find_size = 0;
 
+        if(find_size == size)
+            return start_pos-size+1;
+    }
+
+    return -1;
+}
 int record_slab_malloc_size(page_info *page,int off,int length) {
     //1.put the bitmap of the malloc.
     if(off==0)
@@ -188,8 +205,7 @@ void * page_malloc(){
 
     return NULL;
 }
-void page_init(void *page)  //先假设我初始化没有问题。
-{
+void page_init(void *page) {
     int i;
     page_info *pagei = super->page_info_tmp; //give a space to store address.
     pagei->bitmap = (uchar *)page+4032; //? 64*63 = 4032?
@@ -262,9 +278,9 @@ void reset_page(slab_page_array *array,page_info *pagei) {
         array[num].head = (page_info * )((size_t)pagei->bitmap-4032);
         array[num].tail = (page_info * )((size_t)pagei->bitmap-4032);
     } else {
-        *pagei->pre = array[num].tail;
         set_super_page_info_tmp(array[num].tail,super->page_info_pre);
         page_info * page_pre = super->page_info_pre;
+        *pagei->pre = (size_t)array[num].tail;
         *page_pre->next = (size_t)pagei->bitmap-4032;  //tail next  = pagei
         array[num].tail = (size_t)pagei->bitmap-4032;   //tail = pagei
     }
@@ -295,6 +311,7 @@ void reconf_page(page_info *page) {
 */
 /*---------------add from fxl--------------------*/
 /*----------------2021.03.15---------------------*/
+
 void NVMinit(){
     printf("-------NVMinit------addr super %llx;\n",super);
     super->slab_array = (uint *)(super + 1);
@@ -304,8 +321,13 @@ void NVMinit(){
     super->page_info_pre = (page_info *)(super->page_info_tmp + 1);
     super->page_info_next = (page_info *)(super->page_info_pre + 1);
     super->data = (char *)(((((size_t)super->page_info_next + sizeof(page_info))>>12)+1)<<12); //500M buffer? page alignment.
-    printf("get start ~ end: %p ~ %p\n",super->data,(size_t)super+NVM_SIZE);
+    super->reservedblocks = (size_t)super->data + DEVICE_SIZE;
+    super->rsvdblock_number = ((size_t)super+NVM_SIZE - (size_t)super->reservedblocks)>>12;
 
+    printf("get start ~ end: %p ~ %p\n",super->data,super->reservedblocks);
+    printf("reservedblock start ~ end: %p ~ %p\n",super->reservedblocks,(size_t)super+NVM_SIZE);
+    printf("reserved page size:%d\n",super->rsvdblock_number);
+    
     for(int i=0;i<slab_array_size;i++) {
         super->slab_array[i].head = NULL;
         super->slab_array[i].tail = NULL;
@@ -408,9 +430,7 @@ int insert_to_free_list(free_list *new_free_list) {
 
 }
 void BlockFree(void *addr) { //this is to free the blocks and add them to free list
-    // ???...
-    // I will find the right way of the list.
-    // 1. find the right way
+
     free_list *new_free_list;
     new_free_list = (free_list *)addr;
     long size = super->block_array[((size_t)addr-(size_t)super->data)>>12];
@@ -443,6 +463,11 @@ void NVMfree(void *ptr){ //this size refers to allocation size
     if (ptr == NULL) {
         return;
     }
+    // 0.reserved block.
+    if(is_rsvdblock(ptr)) {
+        rsvdblockFree(ptr);
+        return;
+    }
     // 1. judge the pointer possible in block;
     if(!(((size_t)ptr-(size_t)super->data)%4096)) {
         if(super->block_array[((size_t)ptr-(size_t)super->data)/4096] > 0) {
@@ -457,15 +482,58 @@ void NVMfree(void *ptr){ //this size refers to allocation size
 void block_endurence_add(void * addr,size_t size) {
     calc_counter2(addr,size*64);
 }
+int rsvd_start = 0;
+void * get_reservedblocks(size_t sizebytes) { // The header is not included.
 
-void *BlockMalloc(size_t size){
+    int size  = (sizebytes + sizeof(rsvdblock_head) + 4095) >> 12;
+
+    int start = rsvd_start;
+    int pos = find_first_n(start, super->rsvdblock_number, reservedbits, size);
+    if(pos == -1) {
+        pos = find_first_n(0, super->rsvdblock_number, reservedbits, size);
+        if(pos == -1)
+            return NULL;
+    }
+
+    // Find block, then set bits.
+    rsvd_start = pos + size;
+    set_bit(pos, size, reservedbits);
+    printf("rsvd_start:%d\n",rsvd_start);
+
+    void *rhPage = ((size_t)super->reservedblocks+((size_t)pos<<12));
+    rsvdblock_head *rh =  rhPage;
+    rh->nPages = size;
+    return (void *)((size_t)rhPage + sizeof(rsvdblock_head));
+}
+int is_rsvdblock(void * ptr) {
+    return ((size_t)ptr >= (size_t)super->reservedblocks) && (((size_t)ptr&(size_t)sizeof(rsvdblock_head))==sizeof(rsvdblock_head));
+}
+void rsvdblockFree(void * ptr) { // the ptr is the rsvdblock.
+    void *rhPage = (void *)((size_t)ptr - sizeof(rsvdblock_head));
+    rsvdblock_head *rh =  rhPage;
+    int size = rh->nPages;
+    int pos = ((size_t)rhPage - (size_t)super->reservedblocks) >> 12;
+
+    reset_bit(pos,size,reservedbits);
+
+    printf("pos:%d,size:%d\n",pos,size);
+}
+void *BlockMalloc(size_t original_size){ // size = the number of page asked.
+    
+    unsigned int size = (original_size+BLOCKSIZE-1)>>12;
     void * block = NULL;
 
     free_list *freenode,*freenodenext,*freenode_copy;//add??? pointer.
     freenode = super->list_head->head;
     if (freenode==NULL)  {
-        printf("no space ! exit!");
-        exit(0);
+        block = get_reservedblocks(original_size);
+        if(block == NULL) {
+            printf("no space ! exit!");
+            exit(0);
+        } else {
+            return block;
+        }
+
     }
     freenodenext = freenode->list_next;
     if(freenode->pages >=size) {
@@ -626,7 +694,7 @@ void * reform_thread(int size, superblock * sb) {
                     reform_pointer = i + 1;
                     return page;
                 } else if(*(tmppage->maxnum) > 0)
-                    reset_page(super->block_array,tmppage);
+                    reset_page(super->slab_array,tmppage);
             }
         }
     }
@@ -679,8 +747,7 @@ void *NVMmalloc(size_t size){ //general function to malloc by using two sub func
     if (slabsize < 64) {
         result = SlabMalloc(slabsize);
     } else {
-        unsigned int blocksize = (size+BLOCKSIZE-1)>>12;
-        result = BlockMalloc(blocksize);
+        result = BlockMalloc(size);
     }
     if (result == NULL) {
         printf("!!!!!!malloc is NULL! @!!!!!!! No spage.!!!\n");

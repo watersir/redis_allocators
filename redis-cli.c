@@ -1878,7 +1878,7 @@ int main(int argc, char **argv) {
     // fxl
     slot_endurance = calloc(SUM_PAGES*64,sizeof(unsigned int));
     printf("enter redis-cli;\n");
-    void * ret  = mmap(0x7f0000000000,NVM_SIZE, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS,-1, 0);
+    void * ret  = mmap(ADDR,NVM_SIZE, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS,-1, 0);
     if (ret == MAP_FAILED){
         ret = NULL;
         printf("Mmap failed! Exit.\n");
