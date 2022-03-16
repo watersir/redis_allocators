@@ -64,7 +64,7 @@ void zlibc_free(void *ptr) {
 #include <assert.h>
 superblock *super =  (superblock *)super_block;
 unsigned int  slot_endurance[SUM_PAGES*64] = {0}; // 268,435,456 : int limit = 4,294,967,295
-char reservedbits[24579 / 8 + 1] = {0};
+char reservedbits[49148 / 8 + 1] = {0};
 
 int set_super_page_info_tmp(page_info *page,page_info *page_info_tmp) {
     page_info *pagei = page_info_tmp;
@@ -469,14 +469,14 @@ void reset_page(slab_page_array *array,page_info *pagei) {/*???Guess if I need t
         judge_if_list_update();
 }
 
-void reconf_page(page_info *page) {
-    if(*page->maxnum != 0) return;
-    //I don't need to do more things, I just put it to the original list.
-    if(*page->freenum>=10 && *page->maxnum==0) {
-        find_longgest_zero(page); // calculate the maxnum.
-    }
-    if(*page->maxnum!=0 )reset_page(super->slab_array,page);
-}
+// void reconf_page(page_info *page) {
+//     if(*page->maxnum != 0) return;
+//     //I don't need to do more things, I just put it to the original list.
+//     if(*page->freenum>=10 && *page->maxnum==0) {
+//         find_longgest_zero(page); // calculate the maxnum.
+//     }
+//     if(*page->maxnum!=0 )reset_page(super->slab_array,page);
+// }
 /*void reconf_page(page_info *page) {
     if(*page->freenum == 0) return;
     //I don't need to do more things, I just put it to the original list.
@@ -755,26 +755,33 @@ void *BlockMalloc(size_t original_size){
     return NULL;
 }
 void * reform_thread(int size, superblock * sb, int i) {
-
     int idx = i*slab_array_size + 0;
+//    printf("reform i:%d\n",i);
     while(super->slab_array[idx].head != NULL) {
-        void *page = (void *)super->slab_array[idx].head;
-        page_info * tmppage = sb->page_info_tmp;
-        tmppage->bitmap = (uchar *)page+4032;;
-        tmppage->freenum = (uchar *)tmppage->bitmap+8;
-        tmppage->maxnum= tmppage->freenum + 1;
-        tmppage->offset= tmppage->maxnum + 1;
-        tmppage->next=(ulong *)(tmppage->offset+1);
-        tmppage->pre=(ulong *)((long *)tmppage->next+1);
-        tmppage->leave_endurance = (ulong *)((long *)tmppage->pre+1);
-        tmppage->bitmap_size = (uchar *)(tmppage->leave_endurance+1);
-        super->slab_array[idx].head = tmppage->next;
-        if( *(tmppage->freenum) != 0) {
-            find_longgest_zero(tmppage);
-            if(*(tmppage->maxnum) >= size) {
-                return page;
-            } else if(*(tmppage->maxnum) > 0)
-                reset_page(super->slab_array,tmppage); // ? optimize.
+
+        void * tmppage = (void *)super->slab_array[idx].head;
+        set_super_page_info_tmp(tmppage,super->page_info_tmp);
+        page_info *pagei = super->page_info_tmp;
+        super->slab_array[idx].head = *pagei->next;
+        
+        if(super->slab_array[idx].head != NULL) {
+            set_super_page_info_tmp(super->slab_array[idx].head,super->page_info_next);
+            page_info * page_info_next = super->page_info_next;
+            *page_info_next->pre = NULL;
+        }
+        *pagei->next=NULL;
+        *pagei->pre=NULL;
+
+        /* add minus from the list.*/
+        super->sum_pages_list[i]--; // So, the zero array will be included.
+        super->sum_pages_slab[idx]--;
+
+        if( *(pagei->freenum) != 0) {
+            find_longgest_zero(pagei);
+            if(*(pagei->maxnum) >= size) {
+                return tmppage;
+            } else if(*(pagei->maxnum) > 0)
+                reset_page(super->slab_array,pagei); // ? optimize.
         }
     }
 

@@ -1871,13 +1871,11 @@ static void intrinsicLatencyMode(void) {
  * Program main()
  *--------------------------------------------------------------------------- */
 #include<sys/mman.h>
-extern unsigned int * slot_endurance;
 int main(int argc, char **argv) {
 
 
     // fxl
     printf("enter redis-cli;\n");
-    slot_endurance = calloc(SUM_PAGES*64,sizeof(unsigned int));
     void * ret  = mmap(0x7f0000000000,NVM_SIZE, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS,-1, 0);
     if (ret == MAP_FAILED){
         printf("Mmap failed! Exit.\n");
